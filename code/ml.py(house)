@@ -1,0 +1,100 @@
+import pandas as pd
+import numpy as np
+import pickle
+from sklearn.model_selection import train_test_split
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_squared_log_error
+import os
+import sys
+
+sys.path.insert(0, os.getcwd())
+from code import constants
+
+class Model():
+    def __init__(self):
+        self.data_file = constants.DATA_FOLDER + constants.DATA_FILE
+        self.model_file = constants.MODEL_FOLDER + constants.MODEL_FILE
+        self.graphs_folder = constants.GRAPHS_FOLDER
+
+        # Initialize transformers
+        self.imputer_num = SimpleImputer(missing_values=np.nan, strategy='mean')
+        self.encoder_cat = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+        self.scaler = MinMaxScaler()
+
+    def preprocess_features(self, data, is_train=True):
+        numerical_vars = ['LotArea', 'OverallQual', 'YearRemodAdd', 'BsmtFinSF1', 'TotalBsmtSF', 
+                           'FirstFlrSF', 'SecondFlrSF', 'GrLivArea', 'GarageCars']
+
+        if is_train:
+            # Impute numerical variables
+            data[numerical_vars] = self.imputer_num.fit_transform(data[numerical_vars])
+            
+            # Encode categorical variables
+            data['BsmtQual'] = data['BsmtQual'].fillna('Missing')
+            data['BsmtQual'] = self.encoder_cat.fit_transform(data[['BsmtQual']])
+            
+            # Scale numerical features
+            data[numerical_vars] = self.scaler.fit_transform(data[numerical_vars])
+        else:
+            # Impute numerical variables
+            data[numerical_vars] = self.imputer_num.transform(data[numerical_vars])
+            
+            # Encode categorical variables
+            data['BsmtQual'] = data['BsmtQual'].fillna('Missing')
+            data['BsmtQual'] = self.encoder_cat.transform(data[['BsmtQual']])
+            
+            # Scale numerical features
+            data[numerical_vars] = self.scaler.transform(data[numerical_vars])
+        
+        return data
+
+    def data_transformation(self, test_data=None, is_train=True):
+        X = pd.read_csv(self.data_file)
+        
+        if is_train:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X[['LotArea', 'OverallQual', 'YearRemodAdd', 'BsmtFinSF1', 'TotalBsmtSF', 
+                   'FirstFlrSF', 'SecondFlrSF', 'GrLivArea', 'GarageCars', 'BsmtQual']],
+                X['SalePrice'],
+                test_size=0.2,
+                random_state=42
+            )
+            X_train = self.preprocess_features(X_train, is_train=True)
+            X_test = self.preprocess_features(X_test, is_train=False)
+            return X_train, X_test, y_train, y_test
+        else:
+            test_data = self.preprocess_features(test_data, is_train=False)
+            return test_data
+
+    def model_fit(self, X_train, y_train):
+        gb_reg = GradientBoostingRegressor(
+            loss='squared_error',  # Updated loss parameter
+            random_state=10,
+            n_estimators=50,
+        )
+        gb_reg.fit(X_train, y_train)
+        with open(self.model_file, 'wb') as f:
+            pickle.dump(gb_reg, f)
+
+    def model_predict(self, X_test):
+        try:
+            with open(self.model_file, 'rb') as f:
+                loaded_model = pickle.load(f)
+        except FileNotFoundError:
+            print("Model file not found. Please train the model first.")
+            return None
+        y_pred = loaded_model.predict(X_test)
+        return y_pred
+
+    def cost_metric(self, y_true, y_pred):
+        return mean_squared_log_error(y_true, y_pred)
+
+if __name__ == "__main__":
+    if not os.path.exists(constants.MODEL_FOLDER):
+        os.makedirs(constants.MODEL_FOLDER)
+    
+    model = Model()
+    X_train, X_test, y_train, y_test = model.data_transformation()
+    model.model_fit(X_train, y_train)
